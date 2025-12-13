@@ -1,0 +1,1697 @@
+Can you create a markdown file with instructions for Codex AI agent for implementing all described in this chat from the beginning(from scratch) and up to current point?
+
+Below is a single, self-contained Markdown file you can hand directly to a Codex AI agent.
+It is written as implementation instructions, starting from scratch and covering everything designed in this chat, end-to-end, up to the current point.
+
+You can copy-paste this into CODEX_INSTRUCTIONS.md.
+
+Codex Instructions
+PayloadCMS 3.0 + Thirdweb Engine Web3 Wallet Platform
+
+(Backend-Controlled Smart Accounts, Fixed Token Deposit Tracking)
+
+0. Purpose of This Document
+
+You are a Codex AI agent tasked with implementing a production-grade Web3 wallet application using:
+
+Payload CMS 3.0
+
+Next.js App Router
+
+thirdweb Dedicated Engine v2
+
+Account Abstraction (ERC-4337 Smart Accounts)
+
+Backend-controlled custody by default
+
+Optional user-connected wallets (later)
+
+EVM chains: Ethereum, BSC, Base, Arbitrum, Polygon
+
+Solana backend-controlled wallets
+
+Fixed allowlist deposit tracking (USDC/USDT etc.)
+
+Customers must never access Payload Admin UI or CMS.
+
+This document is authoritative. Implement exactly what is described unless explicitly noted as optional.
+
+1. Core Architecture
+1.1 Monorepo Structure
+/apps/web
+  /app
+    /(public)
+    /(account)
+    /api
+  /src
+    /payload
+    /lib
+  middleware.ts
+
+
+Payload runs inside Next.js
+
+App Router only
+
+TypeScript only
+
+2. Authentication & Access Control (Critical)
+2.1 Two Auth Collections
+
+You MUST implement two separate auth collections:
+
+Collection	Purpose
+admins	Only users allowed to access Payload Admin UI
+customers	App users only (wallet users)
+
+In payload.config.ts:
+
+admin: {
+  user: 'admins'
+}
+
+
+➡️ This guarantees customers cannot log into /admin, even if they try.
+
+2.2 Route Protection (Next.js Middleware)
+
+Create middleware.ts:
+
+/admin/* → requires admin session
+
+/account/* → requires customer session
+
+Customers must be redirected to /login if unauthorized.
+
+3. Wallet Strategy
+3.1 EVM (Ethereum, BSC, Base, Arbitrum, Polygon)
+
+Use thirdweb Dedicated Engine v2
+
+Use Account Abstraction (ERC-4337)
+
+Backend-controlled smart accounts
+
+One smart account per customer
+
+Deterministic address via account salt
+
+Gas sponsorship enabled via Engine
+
+Smart account identity =
+(AccountFactory + adminAddress + accountSalt)
+
+3.2 Solana
+
+Use thirdweb Solana server wallets
+
+Backend-controlled
+
+Wallet created at signup
+
+Must be funded with SOL manually
+
+Optional later:
+
+user-connected Solana wallets (not default)
+
+4. Payload Collections (Schemas)
+4.1 Identity
+admins
+
+auth: true
+
+role: admin | ops | support
+
+customers
+
+auth: true
+
+role is forced to customer
+
+cannot modify role
+
+relationships:
+
+evmAccount
+
+solWallet
+
+4.2 Wallets
+evm_smart_accounts
+
+customer
+
+smartAccountAddress
+
+salt (cust:<customerId>)
+
+factoryAddress
+
+adminAddress
+
+supportedChainIds
+
+custodyMode = backend
+
+sol_server_wallets
+
+customer
+
+thirdwebWalletId
+
+publicKey
+
+network
+
+custodyMode = backend
+
+4.3 Transactions
+
+Unified ledger for all activity.
+
+Fields:
+
+customer
+
+networkType: evm | solana
+
+chainId
+
+type: deposit | transfer | topup
+
+status: pending | confirmed | failed | reverted
+
+source: engine | insight
+
+idempotencyKey (unique)
+
+transactionHash
+
+logIndex
+
+blockNumber
+
+blockTimestamp
+
+confirmations
+
+confirmationsRequired
+
+from
+
+to
+
+asset
+
+amount
+
+rawWebhook
+
+4.4 Token Allowlist (Deposits)
+token_allowlist
+
+Admin-only.
+
+Fields:
+
+chainId
+
+symbol
+
+name
+
+contractAddress
+
+decimals
+
+confirmationsRequired
+
+isActive
+
+Only tokens in this table are tracked for deposits.
+
+4.5 Indexer State
+indexer_state
+
+Admin-only.
+
+Fields:
+
+chainId
+
+lastBlockTimestamp
+
+Used to make deposit syncing efficient.
+
+4.6 Engine Settings
+engine_settings
+
+Singleton.
+
+Fields:
+
+engineUrl
+
+engineAccessToken
+
+backendWalletAddress
+
+accountFactories[] (chainId → factoryAddress)
+
+rpcUrls[] (chainId → RPC URL)
+
+5. Smart Account Address Resolution (Deterministic)
+
+Use thirdweb SDK v5:
+
+predictSmartAccountAddress({
+  client,
+  chain,
+  factoryAddress,
+  adminAddress,
+  accountSalt,
+})
+
+
+This allows:
+
+Instant deposit address display
+
+Deposits before deployment (counterfactual)
+
+NEVER rely on Engine response for address.
+
+6. EVM Execution via Dedicated Engine v2
+6.1 Headers Used
+Purpose	Header
+Backend wallet	x-backend-wallet-address
+Smart account (salt)	x-account-salt
+Smart account (address)	x-account-address
+Atomic native tx	x-smart-account-address
+6.2 ERC-20 Transfer
+
+Endpoint:
+
+POST /contract/{chainId}/{token}/write
+
+
+Payload:
+
+{
+  "functionName": "transfer(address,uint256)",
+  "args": ["0xRecipient", "amountWei"]
+}
+
+
+Headers:
+
+x-backend-wallet-address
+
+x-account-salt
+
+6.3 Native Transfer
+
+Endpoint:
+
+POST /backend-wallet/{chainId}/send-transaction-batch-atomic
+
+
+Payload:
+
+{
+  "transactions": [
+    { "toAddress": "0xRecipient", "value": "wei", "data": "0x" }
+  ]
+}
+
+
+Headers:
+
+x-backend-wallet-address
+
+x-smart-account-address
+
+7. Engine Webhooks (Outbound TXs)
+
+Verify HMAC signature:
+
+HMAC_SHA256(secret, `${timestamp}.${rawBody}`)
+
+
+Update transactions:
+
+sent
+
+mined
+
+errored
+
+reverted
+
+Webhooks may arrive out-of-order → apply status priority
+
+8. Deposits (Inbound Funds)
+8.1 Strategy
+
+Track ONLY allowlisted tokens
+
+Use thirdweb Insight Events API
+
+Polling cron (reliable)
+
+Idempotent upserts
+
+8.2 Deposit Sync Job
+
+Runs every 1–2 minutes.
+
+For each:
+
+Chain
+
+Allowlisted token
+
+Fetch:
+
+Transfer(address,address,uint256)
+
+
+Logic:
+
+Match to address to customer smart accounts
+
+Create transactions:
+
+type = deposit
+
+status = pending
+
+confirmations = 0
+
+8.3 Confirmations Job
+
+Runs every 1–2 minutes.
+
+For each pending deposit:
+
+Fetch latest block via RPC
+
+confirmations = latestBlock - tx.blockNumber
+
+If >= required → mark confirmed
+
+9. Admin Tools
+9.1 Token Allowlist Bulk Import
+
+Admin-only API route.
+
+Supports:
+
+Upsert mode
+
+Insert-only mode
+
+Optional deactivate missing tokens
+
+9.2 Reindex Deposits
+
+Admin-only.
+
+Allows setting indexer_state.lastBlockTimestamp backward to resync history.
+
+10. Customer UI
+/account/deposits
+
+Server component.
+
+Features:
+
+Shows deposits only
+
+Joins token metadata (symbol, decimals)
+
+Pending-only toggle
+
+Chain filter
+
+Token filter
+
+Confirmation progress
+
+Explorer links
+
+11. Security Requirements (Non-Negotiable)
+
+No private keys stored in DB
+
+All custody via thirdweb Engine / server wallets
+
+Customers:
+
+cannot access Admin UI
+
+cannot modify roles
+
+can only read/write their own data
+
+All webhooks:
+
+signature verified
+
+idempotent
+
+Cron routes:
+
+protected by secret header
+
+12. Deployment Notes
+
+Use Postgres
+
+Run cron jobs via:
+
+Vercel cron
+
+Cloud scheduler
+
+Monitor:
+
+Engine webhook failures
+
+Insight sync lag
+
+Confirmation job lag
+
+13. Future Extensions (Do NOT implement now)
+
+User-connected wallets
+
+NFT support
+
+Token swaps
+
+Solana deposits
+
+Insight webhooks (push instead of poll)
+
+14. Definition of Done
+
+The implementation is complete when:
+
+A customer signs up → wallets are provisioned
+
+Deterministic EVM address is shown immediately
+
+ERC-20 & native transfers work via Engine
+
+Deposits of allowlisted tokens are detected
+
+Deposits move from pending → confirmed
+
+Customers cannot access /admin
+
+Admins can manage tokens and reindex safely
+
+End of Codex Instructions
+
+If you want, next I can:
+
+split this into tasks.json for autonomous agent execution,
+
+generate a Mermaid architecture diagram,
+
+or convert this into a PR checklist for human review.
+
+Can you please examine the implementation correctness at codex/implement-web3-wallet-application branch of the repo at "https://github.com/TectRND/paywallet/"
+Thought for 1m 6s
+
+I tried to inspect the branch on GitHub directly, but I’m blocked from reading the actual source files right now because GitHub is returning the “Uh oh! There was an error while loading. Please reload this page.” shell for file views in that repo/branch (the HTML the tool can access doesn’t include the code content—only the nav chrome). You can see that behavior on the branch root view I’m able to open. 
+GitHub
+
+Because of that, I cannot सत्यfully verify implementation correctness (collections, middleware, routes, headers, cron jobs, etc.) from GitHub alone at the moment.
+
+Fastest way to let me do a real review
+
+Pick any one of these (whichever is easiest for you):
+
+Upload a ZIP of the branch (or the apps/web folder) here.
+
+Share direct “raw” URLs for the key files (GitHub raw endpoints) and I’ll review them.
+
+Paste the contents of these files (minimal set) and I’ll audit them:
+
+Must-audit files
+
+apps/web/payload.config.ts (or wherever your Payload config lives)
+
+apps/web/src/payload/collections/* (admins, customers, engine_settings, evm_smart_accounts, token_allowlist, indexer_state, transactions)
+
+apps/web/middleware.ts
+
+apps/web/app/api/cron/sync-evm-deposits/route.ts
+
+apps/web/app/api/cron/confirm-evm-deposits/route.ts
+
+apps/web/app/api/wallet/evm/transfer-erc20/route.ts
+
+apps/web/app/api/wallet/evm/transfer-native/route.ts
+
+apps/web/app/api/admin/token-allowlist/bulk-import/route.ts
+
+apps/web/app/api/admin/reindex-evm-deposits/route.ts
+
+apps/web/app/(account)/account/deposits/page.tsx
+
+apps/web/src/lib/thirdweb/engine.ts
+
+apps/web/src/lib/thirdweb/insight.ts
+
+apps/web/src/lib/wallet/ensureEvmSmartAccount.ts
+
+apps/web/src/lib/wallet/resolveEvmSmartAccountAddress.ts
+
+What I’ll check once I can see code
+
+Here’s the exact correctness checklist I’ll run (so you know what I’m validating):
+
+Admin lockout is correct
+
+Payload admin user collection is admins (customers cannot access /admin)
+
+Middleware blocks /admin/* for non-admin sessions
+
+Auth model is correct
+
+Separate admins and customers auth collections
+
+Customer role is forced and not client-editable
+
+Engine Dedicated v2 correctness
+
+Uses Authorization: Bearer <token>
+
+Uses correct headers:
+
+contract writes: x-backend-wallet-address + (x-account-salt preferred) or x-account-address
+
+native atomic batch: x-backend-wallet-address + x-smart-account-address
+
+Deterministic smart account addresses
+
+predictSmartAccountAddress is used
+
+DB stores salt, adminAddress, factoryAddress
+
+UI can show deposit address instantly (counterfactual)
+
+Deposit tracking allowlist
+
+token_allowlist is admin-only
+
+Sync job reads allowlist + accounts, dedupes via chainId + txHash + logIndex
+
+Creates deposits as pending
+
+Confirmations job
+
+Uses RPC per chain, updates confirmations
+
+Marks confirmed when confirmations >= confirmationsRequired
+
+Idempotency + security
+
+Cron routes protected by secret header
+
+Webhook routes verify signatures and are idempotent
+
+If you upload the branch ZIP (or just apps/web) I’ll go line-by-line and tell you what’s correct, what’s broken, and the exact patches to fix any mismatches.
+
+paywallet-codex-implement-web3-wallet-application.zip
+Zip Archive
+Here is branch zip attached
+Thought for 1m 57s
+
+I unpacked the ZIP and reviewed what’s actually implemented in apps/web. The branch is not correct / not complete relative to what we designed in this chat.
+
+High-level status
+
+✅ Some scaffolding exists (Payload config file, collections stubs, /account/deposits page stub, middleware stub).
+❌ Most of the required functionality is missing (Engine client, Insight client, wallet provisioning, transfers, cron jobs, admin tools, webhook verification).
+❌ Several key files contain literal ... placeholders, which will break TypeScript compilation.
+
+Below is a concrete audit with exact issues and what to fix.
+
+1) Build-breaking placeholders (...) are present
+
+These files include literal ... in the source:
+
+apps/web/src/payload/payload.config.ts
+
+apps/web/src/payload/collections/customers.ts
+
+apps/web/src/payload/collections/evmSmartAccounts.ts
+
+apps/web/src/payload/globals/engineSettings.ts
+
+likely others (I saw multiple truncations)
+
+This will fail typecheck/build immediately.
+
+Fix: Remove all ... placeholders and implement full objects.
+
+2) Payload 3 setup is incorrect / inconsistent
+2.1 Wrong imports for Payload v3
+
+apps/web/src/payload/payload.config.ts uses:
+
+import { buildConfig } from 'payload/config';
+
+
+For Payload v3 this should be:
+
+import { buildConfig } from 'payload'
+
+
+Also the repo includes next-payload dependency, but the design we agreed on uses Payload v3’s Next integration utilities (@payloadcms/next/utilities with getPayloadHMR). Your branch does not include @payloadcms/next.
+
+Fix:
+
+Replace payload/config import with payload
+
+Add @payloadcms/next and implement the getPayloadHMR Local API helper.
+
+Remove next-payload unless you intentionally use it (it does not match the plan).
+
+3) Admin lockout is NOT implemented correctly
+3.1 admin.user = 'admins' is missing (or not visible due to ...)
+
+The Payload config is truncated; I cannot confirm that admin.user is set. This is a core requirement.
+
+Fix: In payload.config.ts ensure:
+
+admin: { user: 'admins' }
+
+3.2 admins access is wide open (security bug)
+
+apps/web/src/payload/collections/admins.ts:
+
+access: {
+  read: () => true,
+  update: () => true,
+  delete: () => true,
+  create: () => true
+}
+
+
+This is a critical security issue. It means anyone who can hit API routes could read/modify admins depending on how routes are exposed.
+
+Fix: Restrict admins collection access to admins only (e.g. isAdmin access function). Customers should never be able to read admin docs.
+
+4) Customer scoping is incorrect (data leak risk)
+
+Example: customers collection currently does:
+
+read: ({ req }) => Boolean(req.user),
+update: ({ req }) => Boolean(req.user),
+
+
+That means any authenticated user could read/update any customer unless Payload is implicitly scoping (it isn’t by default). You need “self-only” scope rules.
+
+Fix: Implement customer-scoped access:
+
+For customers: { id: { equals: req.user.id } }
+
+For evm_smart_accounts, sol_server_wallets, transactions: { customer: { equals: req.user.id } }
+
+Also: role enforcement on signup is not implemented (no hook). Customers must not be able to set/modify role.
+
+5) Middleware is not correct for Payload sessions
+
+apps/web/middleware.ts checks cookies named:
+
+admin-session
+
+customer-session
+
+These cookie names don’t correspond to Payload auth cookies and there are no /api/auth/*/me endpoints to validate sessions.
+
+Also the file includes ... placeholder.
+
+Fix (recommended):
+
+Implement /api/auth/admins/me and /api/auth/customers/me using Payload Local API
+
+Middleware should call these endpoints (forwarding cookies) rather than guessing cookie names.
+
+6) Most required routes are missing
+
+Only app/api/health/route.ts exists.
+
+Missing entirely (required by spec):
+
+/api/wallet/evm/create
+
+/api/wallet/evm/transfer-erc20
+
+/api/wallet/evm/transfer-native
+
+/api/wallet/solana/create
+
+/api/wallet/solana/transfer
+
+/api/webhooks/engine (signature verification + tx updates)
+
+/api/cron/sync-evm-deposits
+
+/api/cron/confirm-evm-deposits
+
+/api/admin/token-allowlist/bulk-import
+
+/api/admin/reindex-evm-deposits
+
+Fix: Implement these exactly per the plan (Engine execution + Insight polling + confirmations updater).
+
+7) Missing libraries/helpers
+
+There is an empty apps/web/src/lib/ folder. Missing:
+
+src/lib/payload.ts (Local API helper using getPayloadHMR)
+
+src/lib/thirdweb/engine.ts
+
+src/lib/thirdweb/insight.ts
+
+src/lib/wallet/resolveEvmSmartAccountAddress.ts (using predictSmartAccountAddress)
+
+src/lib/wallet/ensureEvmSmartAccount.ts
+
+src/lib/evm/explorers.ts
+
+src/lib/evm/rpc.ts (viem getBlockNumber)
+
+webhook HMAC verification helper
+
+Fix: Add all of the above.
+
+8) Deposits page is a placeholder
+
+apps/web/app/(account)/account/deposits/page.tsx is currently a UI stub (“filters will appear here”) and does not query Payload or show real deposits.
+
+Fix: Implement the real server component version that:
+
+Auths customer via Payload Local API
+
+Loads allowlist metadata
+
+Queries transactions for deposits
+
+Implements filters + explorer links
+
+Bottom line
+
+This branch is not implementation-correct yet. It’s an incomplete scaffold with placeholders, missing routes, incorrect access control, and wrong session assumptions.
+
+If you want, I can produce a patch plan as actionable diffs
+
+To do that cleanly, tell me one thing:
+
+Do you want to keep next-payload, or switch to the Payload v3 recommended Next integration (@payloadcms/next)?
+
+If you say “switch to @payloadcms/next” (recommended), I’ll give you a step-by-step patch list (file-by-file) to get the branch to a working baseline fast.
+
+switch to @payloadcms/next
+Thought for 2m 42s
+
+Alright — switching to @payloadcms/next is the right move for Payload 3 + App Router. Here’s a file-by-file patch plan that will take your branch from the current incomplete scaffold to a working baseline that matches everything we designed.
+
+I’m going to be very explicit about what to delete/replace/add, because your branch currently contains ... placeholders and unsafe access rules.
+
+1) Dependencies and project wiring
+1.1 Remove next-payload, add Payload’s official Next integration + DB adapter
+
+Edit: apps/web/package.json
+
+Remove: next-payload
+
+Add:
+
+@payloadcms/next
+
+@payloadcms/db-postgres
+
+pg
+
+viem (for confirmations cron)
+
+Example dependency block (keep your existing payload, payload-cloud, thirdweb, next, react):
+
+"dependencies": {
+  "next": "14.2.5",
+  "react": "18.3.1",
+  "react-dom": "18.3.1",
+  "payload": "3.0.0",
+  "payload-cloud": "3.0.0",
+  "@payloadcms/next": "^3.0.0",
+  "@payloadcms/db-postgres": "^3.0.0",
+  "pg": "^8.11.5",
+  "thirdweb": "5.27.0",
+  "viem": "^2.21.0"
+}
+
+
+Then:
+
+pnpm -C apps/web install
+
+2) Payload config: make it “Payload v3 + Next” correct
+2.1 Fix the import and add db/secret
+
+Your current: apps/web/src/payload/payload.config.ts uses payload/config and has no DB adapter.
+
+Replace it with a proper v3 config:
+
+✅ Replace file: apps/web/src/payload/payload.config.ts
+
+import path from 'path'
+import { fileURLToPath } from 'url'
+import { buildConfig } from 'payload'
+import { postgresAdapter } from '@payloadcms/db-postgres'
+
+import { Admins } from './collections/admins'
+import { Customers } from './collections/customers'
+import { EvmSmartAccounts } from './collections/evmSmartAccounts'
+import { SolServerWallets } from './collections/solServerWallets'
+import { Transactions } from './collections/transactions'
+import { TokenAllowlist } from './collections/tokenAllowlist'
+import { IndexerState } from './collections/indexerState'
+import { EngineSettings } from './globals/engineSettings'
+
+const filename = fileURLToPath(import.meta.url)
+const dirname = path.dirname(filename)
+
+export default buildConfig({
+  secret: process.env.PAYLOAD_SECRET || 'dev-secret-change-me',
+  serverURL: process.env.NEXT_PUBLIC_SERVER_URL || 'http://localhost:3000',
+
+  db: postgresAdapter({
+    pool: { connectionString: process.env.DATABASE_URL },
+  }),
+
+  // CRITICAL: customers must never access Admin UI
+  admin: {
+    user: 'admins',
+  },
+
+  collections: [
+    Admins,
+    Customers,
+    EvmSmartAccounts,
+    SolServerWallets,
+    Transactions,
+    TokenAllowlist,
+    IndexerState,
+  ],
+
+  globals: [EngineSettings],
+
+  typescript: {
+    outputFile: path.resolve(dirname, 'payload-types.ts'),
+  },
+})
+
+2.2 Add a payload.config.ts at apps/web/ root (so payload-config is resolvable)
+
+✅ Add file: apps/web/payload.config.ts
+
+export { default } from './src/payload/payload.config'
+
+
+This lets you import config from "payload-config" (matching the Local API pattern).
+
+2.3 Add a TS path alias for "payload-config"
+
+Edit: apps/web/tsconfig.json → add:
+
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "payload-config": ["./payload.config.ts"]
+    }
+  }
+}
+
+3) Payload Local API helper (required everywhere)
+
+✅ Add file: apps/web/src/lib/payload.ts
+
+import { getPayloadHMR } from '@payloadcms/next/utilities'
+import configPromise from 'payload-config'
+
+export async function getPayloadClient() {
+  return await getPayloadHMR({ config: configPromise })
+}
+
+4) Access control + hooks (fix major security issues)
+
+You currently have Admins readable/updatable by anyone and Customers readable by any logged-in user. That’s a blocker.
+
+4.1 Add access helpers
+
+✅ Add folder/files:
+
+apps/web/src/payload/access/isAdmin.ts
+
+import type { Access } from 'payload'
+
+export const isAdmin: Access = ({ req }) => {
+  return Boolean(req.user && req.user.collection === 'admins')
+}
+
+
+apps/web/src/payload/access/isCustomer.ts
+
+import type { Access } from 'payload'
+
+export const isCustomer: Access = ({ req }) => {
+  return Boolean(req.user && req.user.collection === 'customers')
+}
+
+
+apps/web/src/payload/access/customerScope.ts
+
+import type { Access } from 'payload'
+
+export const customerDocOnly: Access = ({ req }) => {
+  if (!req.user || req.user.collection !== 'customers') return false
+  return { id: { equals: req.user.id } }
+}
+
+export const customerOwnedOnly: Access = ({ req }) => {
+  if (!req.user || req.user.collection !== 'customers') return false
+  return { customer: { equals: req.user.id } }
+}
+
+4.2 Add hook to force role on create and prevent tampering
+
+✅ Add: apps/web/src/payload/hooks/setCustomerRole.ts
+
+import type { CollectionBeforeChangeHook } from 'payload'
+
+export const setCustomerRole: CollectionBeforeChangeHook = async ({ operation, data }) => {
+  if (operation === 'create') {
+    return { ...data, role: 'customer', status: 'active' }
+  }
+  if ('role' in data) delete (data as any).role
+  return data
+}
+
+5) Fix/replace the collections (remove ... placeholders)
+5.1 admins collection (lock down)
+
+✅ Replace: apps/web/src/payload/collections/admins.ts
+
+import type { CollectionConfig } from 'payload'
+import { isAdmin } from '../access/isAdmin'
+
+export const Admins: CollectionConfig = {
+  slug: 'admins',
+  auth: true,
+  admin: { useAsTitle: 'email' },
+
+  access: {
+    read: isAdmin,
+    create: isAdmin,
+    update: isAdmin,
+    delete: isAdmin,
+  },
+
+  fields: [
+    {
+      name: 'role',
+      type: 'select',
+      required: true,
+      defaultValue: 'admin',
+      options: ['admin', 'ops', 'support'],
+    },
+  ],
+}
+
+5.2 customers collection (self-only, role forced)
+
+✅ Replace: apps/web/src/payload/collections/customers.ts
+
+import type { CollectionConfig } from 'payload'
+import { customerDocOnly } from '../access/customerScope'
+import { setCustomerRole } from '../hooks/setCustomerRole'
+
+export const Customers: CollectionConfig = {
+  slug: 'customers',
+  auth: true,
+  admin: { hidden: true },
+
+  access: {
+    read: customerDocOnly,
+    update: customerDocOnly,
+    create: () => true,
+    delete: () => false,
+  },
+
+  hooks: { beforeChange: [setCustomerRole] },
+
+  fields: [
+    {
+      name: 'role',
+      type: 'text',
+      required: true,
+      admin: { readOnly: true },
+    },
+    {
+      name: 'status',
+      type: 'select',
+      defaultValue: 'active',
+      options: ['active', 'suspended', 'deleted'],
+    },
+    {
+      name: 'evmAccount',
+      type: 'relationship',
+      relationTo: 'evm_smart_accounts',
+    },
+    {
+      name: 'solWallet',
+      type: 'relationship',
+      relationTo: 'sol_server_wallets',
+    },
+  ],
+}
+
+5.3 evm_smart_accounts (must include salt/factory/admin)
+
+✅ Replace: apps/web/src/payload/collections/evmSmartAccounts.ts
+
+import type { CollectionConfig } from 'payload'
+import { customerOwnedOnly } from '../access/customerScope'
+
+export const EvmSmartAccounts: CollectionConfig = {
+  slug: 'evm_smart_accounts',
+  admin: { hidden: true },
+
+  access: {
+    read: customerOwnedOnly,
+    create: customerOwnedOnly,
+    update: customerOwnedOnly,
+    delete: () => false,
+  },
+
+  fields: [
+    { name: 'customer', type: 'relationship', relationTo: 'customers', required: true },
+
+    { name: 'smartAccountAddress', type: 'text', required: true, unique: true },
+
+    // deterministic identity
+    { name: 'salt', type: 'text', required: true },
+    { name: 'factoryAddress', type: 'text', required: true },
+    { name: 'adminAddress', type: 'text', required: true },
+
+    { name: 'supportedChainIds', type: 'number', hasMany: true, required: true },
+
+    {
+      name: 'custodyMode',
+      type: 'select',
+      required: true,
+      defaultValue: 'backend',
+      options: ['backend', 'user_connected'],
+    },
+
+    { name: 'aaConfigVersion', type: 'text', defaultValue: 'v1' },
+  ],
+}
+
+5.4 sol_server_wallets (scoped)
+
+Update access to customerOwnedOnly and add uniqueness:
+
+thirdwebWalletId unique
+
+publicKey unique
+
+5.5 token_allowlist and indexer_state must be admin-only
+
+Replace access with isAdmin.
+
+Also fix indexer_state.lastBlockTimestamp to be a number unix seconds, not a date.
+
+5.6 transactions must be scoped + include confirmations fields
+
+access should be customerOwnedOnly
+
+must include: confirmations, confirmationsRequired, blockNumber, blockTimestamp, logIndex, source, idempotencyKey unique
+
+6) Middleware and “me” endpoints (stop guessing cookie names)
+6.1 Add me routes
+
+✅ Add:
+
+app/api/auth/admins/me/route.ts
+
+app/api/auth/customers/me/route.ts
+
+Both should:
+
+import { NextResponse } from 'next/server'
+import { getPayloadClient } from '@/src/lib/payload'
+
+export async function GET(req: Request) {
+  const payload = await getPayloadClient()
+  const { user } = await payload.auth({ headers: req.headers })
+  if (!user || user.collection !== 'admins') return NextResponse.json({ ok: false }, { status: 401 })
+  return NextResponse.json({ ok: true, user: { id: user.id, email: user.email } })
+}
+
+
+(change the collection check for customers)
+
+6.2 Update middleware to call these (recommended)
+
+Replace cookie-name checks with fetch-to-/api/auth/.../me.
+
+7) thirdweb Engine + Insight + AA deterministic address
+7.1 Engine config stored in Payload global (engine_settings)
+
+Your engineSettings.ts currently has ... and missing restrictions.
+
+Make it admin-only (read/update isAdmin)
+
+Include:
+
+engineUrl
+
+engineAccessToken
+
+backendWalletAddress
+
+accountFactories[] { chainId, factoryAddress }
+
+rpcUrls[] { chainId, rpcUrl }
+
+7.2 Engine client wrapper
+
+✅ Add: src/lib/thirdweb/engine.ts
+
+loads engine_settings global via Payload Local API
+
+performs POST with Authorization: Bearer <token>
+
+7.3 Insight client wrapper
+
+✅ Add: src/lib/thirdweb/insight.ts
+
+events endpoint: https://{chainId}.insight.thirdweb.com/v1/events/{contract}/Transfer(...)
+
+auth header: x-client-id: <THIRDWEB_INSIGHT_CLIENT_ID>
+
+7.4 Deterministic resolver (thirdweb SDK v5)
+
+✅ Add: src/lib/wallet/resolveEvmSmartAccountAddress.ts
+
+uses predictSmartAccountAddress
+
+7.5 Ensure smart account record exists
+
+✅ Add: src/lib/wallet/ensureEvmSmartAccount.ts
+
+compute address deterministically
+
+store in evm_smart_accounts
+
+link into customer
+
+8) Required API routes
+
+You need to implement these (they’re currently missing):
+
+8.1 Wallet provisioning
+
+POST /api/wallet/evm/create
+
+POST /api/wallet/solana/create
+
+8.2 Transfers via Engine
+
+POST /api/wallet/evm/transfer-erc20
+
+Engine /contract/{chainId}/{token}/write
+
+headers: x-backend-wallet-address, prefer x-account-salt
+
+POST /api/wallet/evm/transfer-native
+
+Engine /backend-wallet/{chainId}/send-transaction-batch-atomic
+
+headers: x-backend-wallet-address, x-smart-account-address
+
+8.3 Webhook handler for Engine
+
+POST /api/webhooks/engine
+
+verify signature (HMAC SHA256 timestamp + body)
+
+update transactions by queueId/status
+
+8.4 Cron jobs
+
+POST /api/cron/sync-evm-deposits
+
+load allowlist + all smart accounts
+
+query Insight Transfer events since indexer_state timestamp
+
+match to addresses
+
+upsert deposit tx with idempotencyKey insight:{chainId}:{txHash}:{logIndex}
+
+set status pending
+
+POST /api/cron/confirm-evm-deposits
+
+for pending deposits, use RPC latestBlock (viem)
+
+update confirmations and mark confirmed
+
+8.5 Admin tools
+
+POST /api/admin/token-allowlist/bulk-import
+
+POST /api/admin/reindex-evm-deposits
+
+All admin tools must check payload.auth() and user.collection === 'admins'.
+
+9) Customer UI: deposits page must be real
+
+Your current /account/deposits is a stub.
+
+Replace with a server component that:
+
+authenticates customer via Local API
+
+reads allowlist to map symbol/decimals
+
+reads transactions deposits
+
+supports:
+
+pending-only
+
+chain filter
+
+symbol filter
+
+adds explorer links (etherscan/bscscan/basescan/arbiscan/polygonscan)
+
+10) Environment variables to add
+
+At minimum:
+
+PAYLOAD_SECRET=...
+DATABASE_URL=postgres://...
+
+NEXT_PUBLIC_SERVER_URL=http://localhost:3000
+
+THIRDWEB_SECRET_KEY=...
+THIRDWEB_INSIGHT_CLIENT_ID=...
+
+ENGINE_WEBHOOK_SECRET=...   # verifying engine webhook
+CRON_TOKEN=...              # protect cron endpoints
+
+
+Engine url/token/backend wallet are stored in Payload global engine_settings (admin-only).
+
+11) What to delete (to avoid confusion)
+
+Remove next-payload usage entirely.
+
+Remove any code that assumes cookies like admin-session / customer-session.
+
+Payload auth should be validated via payload.auth({ headers }) using cookies managed by Payload.
+
+If you want the fastest path
+
+Say: “Generate the exact diffs / full file contents” and I’ll output the complete code for all missing files/routes (Engine client, Insight sync, cron confirm, middleware, deposits page, admin bulk import), ready to paste into your repo with no placeholders.
+
+Generate the exact diffs / full file contents
+Thought for 9m 55s
+
+Done. I generated a full working patch (no ... placeholders) that switches your branch to @payloadcms/next, fixes security/access control, and adds all routes + cron jobs + Engine webhook + Insight polling + confirmations + deposits UI + admin tools as described in this chat.
+
+Download artifacts
+
+Download unified diff
+
+Download patched repo ZIP
+
+What’s included in the patch
+Switch to official Payload v3 Next integration
+
+Removes next-payload
+
+Adds @payloadcms/next, @payloadcms/db-postgres, pg, viem
+
+Adds root apps/web/payload.config.ts + TS path alias payload-config
+
+Payload config corrected
+
+Uses buildConfig from payload
+
+Adds Postgres adapter
+
+Locks Admin UI to admins (admin.user = 'admins')
+
+Security fixes (major)
+
+admins collection no longer has read/update/delete/create: () => true
+
+Customers can only access their own data (scoped access)
+
+Implemented core APIs
+
+Auth “me” endpoints:
+
+/api/auth/admins/me
+
+/api/auth/customers/me
+
+Middleware now checks via those endpoints (no fake cookie names)
+
+EVM:
+
+/api/wallet/evm/create
+
+/api/wallet/evm/address (deterministic via predictSmartAccountAddress)
+
+/api/wallet/evm/transfer-erc20 (Engine /contract/.../write with x-account-salt)
+
+/api/wallet/evm/transfer-native (Engine atomic batch with x-smart-account-address)
+
+Solana:
+
+/api/wallet/solana/create (thirdweb Solana API)
+
+Engine webhook verification + tx updates
+
+/api/webhooks/engine verifies HMAC signature using:
+
+X-Engine-Timestamp
+
+X-Engine-Signature
+
+Updates transaction status with state-priority logic
+
+Deposits tracking (allowlist only)
+
+token_allowlist + indexer_state
+
+Cron jobs:
+
+/api/cron/sync-evm-deposits (Insight Events polling → creates pending deposits)
+
+/api/cron/confirm-evm-deposits (RPC confirmations via viem → marks confirmed)
+
+Admin tools
+
+/api/admin/token-allowlist/bulk-import
+
+/api/admin/reindex-evm-deposits
+
+/account/deposits UI
+
+Real server component
+
+Filters (pending-only, chain, token)
+
+Confirmation progress
+
+Explorer links (etherscan/bscscan/basescan/arbiscan/polygonscan)
+
+After applying the patch: required env vars
+
+In apps/web/.env (or your deployment secrets):
+
+PAYLOAD_SECRET=...
+DATABASE_URL=postgres://...
+
+NEXT_PUBLIC_SERVER_URL=http://localhost:3000
+
+THIRDWEB_SECRET_KEY=...
+THIRDWEB_INSIGHT_CLIENT_ID=...
+
+ENGINE_WEBHOOK_SECRET=...
+CRON_TOKEN=...
+
+
+And you must create/configure the engine_settings Global in Payload Admin (as an admin):
+
+engineUrl
+
+engineAccessToken
+
+backendWalletAddress
+
+accountFactories (chainId → AccountFactory address)
+
+rpcUrls (chainId → RPC URL)
+
+How to apply (locally)
+
+Replace your branch contents with the patched ZIP (or apply the diff).
+
+Install deps:
+
+pnpm -C apps/web install
+
+
+Run:
+
+pnpm -C apps/web dev
+
+
+Visit /admin → create first admin user in admins.
+
+Configure engine_settings global and add token_allowlist entries.
+
+Schedule cron POSTs with header x-cron-token: $CRON_TOKEN.
+
+If you want, I can also generate a ready-to-run curl script that:
+
+bulk imports USDC/USDT allowlist templates (empty addresses for you to fill)
+
+seeds indexer_state
+
+sanity checks Engine connectivity with a test call
+
+Yes please generate a ready-to-run curl script
+Thought for 12s
+
+Here’s a ready-to-run bash + curl script that will:
+
+Log in as an admin (captures auth cookies)
+
+Verify admin session (/api/auth/admins/me)
+
+Bulk import an allowlist template for USDC/USDT across your EVM chains (addresses are placeholders you must fill)
+
+Seed/reset indexer_state via the reindex endpoint (so deposit sync starts from your chosen timestamp)
+
+Trigger the two cron jobs once (sync deposits + confirm deposits)
+
+Assumptions (matching the patched branch):
+
+Admin login endpoint: POST /api/admins/login (Payload standard REST login for an auth collection)
+
+Admin-only endpoints require a valid admin cookie session
+
+Cron routes require header x-cron-token: $CRON_TOKEN
+
+Save as: scripts/bootstrap-allowlist-and-indexer.sh, then run:
+
+bash scripts/bootstrap-allowlist-and-indexer.sh
+
+#!/usr/bin/env bash
+set -euo pipefail
+
+# =========================
+# CONFIG (edit these)
+# =========================
+BASE_URL="${BASE_URL:-http://localhost:3000}"
+
+ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-changeme}"
+
+# Protects cron endpoints in the implementation
+CRON_TOKEN="${CRON_TOKEN:-supersecret-cron-token}"
+
+# Reindex start (unix seconds). Default: last 24 hours.
+FROM_TS="${FROM_TS:-$(( $(date +%s) - 86400 ))}"
+
+# Optional: only reindex this chain id (leave empty to reindex all chains in allowlist)
+REINDEX_CHAIN_ID="${REINDEX_CHAIN_ID:-}"
+
+# =========================
+# INTERNALS
+# =========================
+COOKIE_JAR="$(mktemp)"
+ALLOWLIST_JSON="$(mktemp)"
+
+cleanup() {
+  rm -f "$COOKIE_JAR" "$ALLOWLIST_JSON"
+}
+trap cleanup EXIT
+
+echo "BASE_URL=$BASE_URL"
+echo "FROM_TS=$FROM_TS"
+
+# =========================
+# 1) Admin login (Payload REST auth for admins collection)
+# =========================
+echo ""
+echo "==> Logging in as admin..."
+curl -sS -c "$COOKIE_JAR" \
+  -H "Content-Type: application/json" \
+  -X POST "$BASE_URL/api/admins/login" \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" \
+  | jq -e '.user.id' >/dev/null
+
+echo "==> Admin login OK."
+
+# =========================
+# 2) Verify admin session via app endpoint
+# =========================
+echo ""
+echo "==> Verifying admin session..."
+curl -sS -b "$COOKIE_JAR" "$BASE_URL/api/auth/admins/me" | jq .
+
+# =========================
+# 3) Create an allowlist template JSON (FILL ADDRESSES!)
+# =========================
+cat > "$ALLOWLIST_JSON" <<'JSON'
+{
+  "mode": "upsert",
+  "setInactiveMissing": false,
+  "tokens": [
+    // Ethereum Mainnet (1)
+    { "chainId": 1, "symbol": "USDC", "name": "USD Coin", "contractAddress": "0x0000000000000000000000000000000000000000", "decimals": 6, "confirmationsRequired": 12 },
+    { "chainId": 1, "symbol": "USDT", "name": "Tether USD", "contractAddress": "0x0000000000000000000000000000000000000000", "decimals": 6, "confirmationsRequired": 12 },
+
+    // BSC (56)
+    { "chainId": 56, "symbol": "USDC", "name": "USD Coin", "contractAddress": "0x0000000000000000000000000000000000000000", "decimals": 18, "confirmationsRequired": 15 },
+    { "chainId": 56, "symbol": "USDT", "name": "Tether USD", "contractAddress": "0x0000000000000000000000000000000000000000", "decimals": 18, "confirmationsRequired": 15 },
+
+    // Base (8453)
+    { "chainId": 8453, "symbol": "USDC", "name": "USD Coin", "contractAddress": "0x0000000000000000000000000000000000000000", "decimals": 6, "confirmationsRequired": 20 },
+    { "chainId": 8453, "symbol": "USDT", "name": "Tether USD", "contractAddress": "0x0000000000000000000000000000000000000000", "decimals": 6, "confirmationsRequired": 20 },
+
+    // Arbitrum One (42161)
+    { "chainId": 42161, "symbol": "USDC", "name": "USD Coin", "contractAddress": "0x0000000000000000000000000000000000000000", "decimals": 6, "confirmationsRequired": 20 },
+    { "chainId": 42161, "symbol": "USDT", "name": "Tether USD", "contractAddress": "0x0000000000000000000000000000000000000000", "decimals": 6, "confirmationsRequired": 20 },
+
+    // Polygon (137)
+    { "chainId": 137, "symbol": "USDC", "name": "USD Coin", "contractAddress": "0x0000000000000000000000000000000000000000", "decimals": 6, "confirmationsRequired": 128 },
+    { "chainId": 137, "symbol": "USDT", "name": "Tether USD", "contractAddress": "0x0000000000000000000000000000000000000000", "decimals": 6, "confirmationsRequired": 128 }
+  ]
+}
+JSON
+
+echo ""
+echo "IMPORTANT: Edit the allowlist JSON and replace 0x000... addresses with the real token contract addresses."
+echo "Allowlist JSON generated at: $ALLOWLIST_JSON"
+echo ""
+echo "Showing file:"
+sed -n '1,200p' "$ALLOWLIST_JSON"
+
+read -r -p $'\nPress ENTER to continue AFTER you have replaced the token contractAddress placeholders...\n' _
+
+# =========================
+# 4) Bulk import allowlist (admin-only)
+# =========================
+echo ""
+echo "==> Bulk importing token allowlist..."
+curl -sS -b "$COOKIE_JAR" \
+  -H "Content-Type: application/json" \
+  -X POST "$BASE_URL/api/admin/token-allowlist/bulk-import" \
+  --data-binary @"$ALLOWLIST_JSON" \
+  | jq .
+
+# =========================
+# 5) Seed/reset indexer_state by reindex endpoint
+# =========================
+echo ""
+echo "==> Reindex (set indexer_state lastBlockTimestamp back) ..."
+
+if [[ -n "$REINDEX_CHAIN_ID" ]]; then
+  echo "Reindexing chainId=$REINDEX_CHAIN_ID fromTimestamp=$FROM_TS"
+  curl -sS -b "$COOKIE_JAR" \
+    -H "Content-Type: application/json" \
+    -X POST "$BASE_URL/api/admin/reindex-evm-deposits" \
+    -d "{\"chainId\":$REINDEX_CHAIN_ID,\"fromTimestamp\":$FROM_TS}" \
+    | jq .
+else
+  # Reindex all chains we support
+  for CHAIN in 1 56 8453 42161 137; do
+    echo "Reindexing chainId=$CHAIN fromTimestamp=$FROM_TS"
+    curl -sS -b "$COOKIE_JAR" \
+      -H "Content-Type: application/json" \
+      -X POST "$BASE_URL/api/admin/reindex-evm-deposits" \
+      -d "{\"chainId\":$CHAIN,\"fromTimestamp\":$FROM_TS}" \
+      | jq .
+  done
+fi
+
+# =========================
+# 6) Trigger deposit sync cron once
+# =========================
+echo ""
+echo "==> Triggering deposit sync cron..."
+curl -sS \
+  -H "x-cron-token: $CRON_TOKEN" \
+  -X POST "$BASE_URL/api/cron/sync-evm-deposits" \
+  | jq .
+
+# =========================
+# 7) Trigger confirmations cron once
+# =========================
+echo ""
+echo "==> Triggering confirmations cron..."
+curl -sS \
+  -H "x-cron-token: $CRON_TOKEN" \
+  -X POST "$BASE_URL/api/cron/confirm-evm-deposits" \
+  | jq .
+
+echo ""
+echo "✅ Done."
+echo "Next:"
+echo " - Visit $BASE_URL/account/deposits (as a customer) to see deposits."
+echo " - Schedule the cron endpoints to run every 1–2 minutes."
+
+Notes (so it runs cleanly)
+
+This script uses jq. Install if missing:
+
+macOS: brew install jq
+
+Ubuntu: sudo apt-get install jq
+
+You must have already:
+
+created an admin user (in admins)
+
+set CRON_TOKEN in your server env to match the script
+
+If you want, I can also generate a second script that:
+
+creates a test customer
+
+fetches their predicted smart account address
+
+prints deposit addresses for all chains
+
+optionally performs a tiny Engine “no-op” call (if you want to validate Engine URL/token from your engine_settings)
