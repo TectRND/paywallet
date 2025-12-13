@@ -2,7 +2,7 @@
 const nextConfig = {
   reactStrictMode: true,
   experimental: {
-    serverComponentsExternalPackages: ['payload', 'payload-cloud', 'next-payload', 'thirdweb']
+    serverComponentsExternalPackages: ['payload', 'thirdweb']
   }
 };
 

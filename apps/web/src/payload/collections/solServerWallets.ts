@@ -1,4 +1,4 @@
-import type { CollectionConfig } from 'payload/types';
+import type { CollectionConfig } from 'payload';
 
 export const SolServerWallets: CollectionConfig = {
   slug: 'sol_server_wallets',

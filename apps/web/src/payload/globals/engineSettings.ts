@@ -1,4 +1,4 @@
-import type { GlobalConfig } from 'payload/types';
+import type { GlobalConfig } from 'payload';
 
 export const EngineSettings: GlobalConfig = {
   slug: 'engine_settings',

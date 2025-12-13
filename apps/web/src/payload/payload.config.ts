@@ -1,5 +1,6 @@
 import path from 'path';
-import { buildConfig } from 'payload/config';
+import { postgresAdapter } from '@payloadcms/db-postgres';
+import { buildConfig } from 'payload';
 import { fileURLToPath } from 'url';
 import { Admins } from './collections/admins';
 import { Customers } from './collections/customers';
@@ -12,8 +13,17 @@ import { EngineSettings } from './globals/engineSettings';
 
 const filename = fileURLToPath(import.meta.url);
 const dirname = path.dirname(filename);
+const payloadSecret = process.env.PAYLOAD_SECRET || 'changeme-secret';
+const connectionString =
+  process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/payload';
 
 export default buildConfig({
+  secret: payloadSecret,
+  db: postgresAdapter({
+    pool: {
+      connectionString
+    }
+  }),
   admin: {
     user: 'admins'
   },
