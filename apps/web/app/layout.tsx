@@ -2,6 +2,9 @@ import './globals.css';
 import type { Metadata } from 'next';
 import { ReactNode } from 'react';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export const metadata: Metadata = {
   title: 'PayWallet',
   description: 'Backend-controlled smart accounts with thirdweb Engine and Payload CMS'
