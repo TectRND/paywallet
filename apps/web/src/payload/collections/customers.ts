@@ -1,11 +1,15 @@
 import type { CollectionConfig } from 'payload';
+import { customerDocOnly, isAdmin } from '../access';
 
 export const Customers: CollectionConfig = {
   slug: 'customers',
   auth: true,
+  hooks: {
+    beforeChange: [({ data }) => ({ ...data, role: 'customer' })]
+  },
   access: {
-    read: ({ req }) => Boolean(req.user),
-    update: ({ req }) => Boolean(req.user),
+    read: customerDocOnly,
+    update: customerDocOnly,
     delete: () => false,
     create: () => true
   },
@@ -17,6 +21,8 @@ export const Customers: CollectionConfig = {
       options: [{ label: 'Customer', value: 'customer' }],
       required: true,
       access: {
+        create: () => false,
+        read: ({ req }) => req.user?.collection === 'admins',
         update: () => false
       }
     },

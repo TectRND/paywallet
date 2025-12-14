@@ -1,10 +1,11 @@
 import type { GlobalConfig } from 'payload';
+import { isAdmin } from '../access';
 
 export const EngineSettings: GlobalConfig = {
   slug: 'engine_settings',
   access: {
-    read: ({ req }) => Boolean(req.user),
-    update: ({ req }) => Boolean(req.user)
+    read: isAdmin,
+    update: isAdmin
   },
   fields: [
     {

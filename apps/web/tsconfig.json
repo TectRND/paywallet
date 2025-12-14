@@ -13,7 +13,7 @@
     "forceConsistentCasingInFileNames": true,
     "noEmit": true,
     "module": "esnext",
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "preserve",
@@ -23,11 +23,17 @@
     "incremental": true,
     "baseUrl": ".",
     "paths": {
+      "@/*": [
+        "./*"
+      ],
       "@/payload/*": [
         "src/payload/*"
       ],
       "@/lib/*": [
         "src/lib/*"
+      ],
+      "payload-config": [
+        "./payload.config.ts"
       ]
     },
     "esModuleInterop": true,

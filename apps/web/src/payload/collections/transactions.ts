@@ -1,12 +1,13 @@
 import type { CollectionConfig } from 'payload';
+import { customerOwnedOnly, isAdmin } from '../access';
 
 export const Transactions: CollectionConfig = {
   slug: 'transactions',
   access: {
-    read: ({ req }) => Boolean(req.user),
-    create: ({ req }) => Boolean(req.user),
-    update: ({ req }) => Boolean(req.user),
-    delete: () => false
+    read: customerOwnedOnly,
+    create: customerOwnedOnly,
+    update: customerOwnedOnly,
+    delete: isAdmin
   },
   admin: {
     defaultColumns: ['customer', 'type', 'status', 'chainId']

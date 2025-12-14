@@ -1,11 +1,12 @@
 import type { CollectionConfig } from 'payload';
+import { customerOwnedOnly } from '../access';
 
 export const SolServerWallets: CollectionConfig = {
   slug: 'sol_server_wallets',
   access: {
-    read: ({ req }) => Boolean(req.user),
-    create: ({ req }) => Boolean(req.user),
-    update: ({ req }) => Boolean(req.user),
+    read: customerOwnedOnly,
+    create: customerOwnedOnly,
+    update: customerOwnedOnly,
     delete: () => false
   },
   fields: [

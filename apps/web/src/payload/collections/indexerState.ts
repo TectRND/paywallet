@@ -1,12 +1,13 @@
 import type { CollectionConfig } from 'payload';
+import { isAdmin } from '../access';
 
 export const IndexerState: CollectionConfig = {
   slug: 'indexer_state',
   access: {
-    read: ({ req }) => Boolean(req.user),
-    create: ({ req }) => Boolean(req.user),
-    update: ({ req }) => Boolean(req.user),
-    delete: ({ req }) => Boolean(req.user)
+    read: isAdmin,
+    create: isAdmin,
+    update: isAdmin,
+    delete: isAdmin
   },
   fields: [
     {
