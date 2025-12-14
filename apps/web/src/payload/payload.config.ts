@@ -27,7 +27,11 @@ export default buildConfig({
   admin: {
     user: 'admins'
   },
-  serverURL: process.env.NEXT_PUBLIC_SERVER_URL || 'http://localhost:3000',
+  routes: {
+    admin: '/admin/cms',
+    api: '/api/payload'
+  },
+  serverURL: process.env.NEXT_PUBLIC_SERVER_URL || process.env.VERCEL_URL || 'http://localhost:3000',
   collections: [
     Admins,
     Customers,

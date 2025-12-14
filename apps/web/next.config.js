@@ -1,9 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  experimental: {
-    serverComponentsExternalPackages: ['payload', 'thirdweb']
-  }
+  serverExternalPackages: ['payload', 'thirdweb']
 };
 
 module.exports = nextConfig;
